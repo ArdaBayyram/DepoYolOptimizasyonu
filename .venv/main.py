@@ -3,19 +3,20 @@ import random
 import heapq
 import math
 import time
+import itertools
 import numpy as np
 from collections import deque
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QMessageBox,
-                             QSpinBox, QGroupBox)
+                             QSpinBox, QGroupBox, QCheckBox, QGridLayout)
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
 from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 # --- AYARLAR ---
-GRID_SIZE = 30
-OBSTACLE_DENSITY = 0.6
+GRID_SIZE = 80
+OBSTACLE_DENSITY = 0.8
 
 
 # --------------------------
@@ -162,6 +163,8 @@ class WarehouseSimulation(QWidget):
         curr = self.start_pos
         last_dx, last_dy = 0, 0
 
+        t_start = time.time()
+
         for item in order:
             if algo_type == 'astar':
                 path, visited = self.pathfinder.find_path_weighted(curr, item, use_heuristic=True)
@@ -187,17 +190,24 @@ class WarehouseSimulation(QWidget):
                 else:
                     full_path.extend(path[1:])
             curr = item
-        return total_dist, total_visited, total_turns, full_path
+
+        t_end = time.time()
+        return {
+            'dist': total_dist,
+            'vis': total_visited,
+            'turns': total_turns,
+            'time': (t_end - t_start) * 1000,
+            'path': full_path
+        }
 
     def run_full_analysis(self):
         if not self.items: return None
-        results = {}
+        results = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
 
         random_state = random.getstate()
         random.seed(str(self.items))
 
-        # A) K-NN
-        t_start = time.time()
+        # --- 1. K-NN ROTA ---
         unvisited = sorted(self.items.copy())
         curr = self.start_pos;
         knn_order = []
@@ -206,12 +216,12 @@ class WarehouseSimulation(QWidget):
             knn_order.append(nearest);
             unvisited.remove(nearest);
             curr = nearest
-        dist, vis, turns, path = self.calculate_metrics(knn_order, algo_type='astar')
-        results['KNN'] = {'dist': dist, 'time': (time.time() - t_start) * 1000, 'turns': turns, 'path': path,
-                          'vis': vis}
 
-        # B) Simulated Annealing
-        t_start = time.time()
+        results['KNN']['A*'] = self.calculate_metrics(knn_order, 'astar')
+        results['KNN']['Dijkstra'] = self.calculate_metrics(knn_order, 'dijkstra')
+        results['KNN']['BFS'] = self.calculate_metrics(knn_order, 'bfs')
+
+        # --- 2. SA ROTA ---
         curr_sol = sorted(self.items.copy());
         random.shuffle(curr_sol)
 
@@ -235,35 +245,37 @@ class WarehouseSimulation(QWidget):
                 if cost(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = cost(curr_sol)
             temp *= 0.99
 
-        dist, vis, turns, path = self.calculate_metrics(best_sol, algo_type='astar')
-        results['SA'] = {'dist': dist, 'time': (time.time() - t_start) * 1000, 'turns': turns, 'path': path, 'vis': vis}
+        results['SA']['A*'] = self.calculate_metrics(best_sol, 'astar')
+        results['SA']['Dijkstra'] = self.calculate_metrics(best_sol, 'dijkstra')
+        results['SA']['BFS'] = self.calculate_metrics(best_sol, 'bfs')
 
-        # C) Rastgele
-        t_start = time.time()
+        # --- 3. BRUTE FORCE ---
+        if len(self.items) <= 11:
+            best_bf_order = None
+            min_bf_dist = float('inf')
+            for p in itertools.permutations(self.items):
+                d = 0;
+                c = self.start_pos
+                for i in p: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
+                if d < min_bf_dist: min_bf_dist = d; best_bf_order = list(p)
+            results['BF'] = self.calculate_metrics(best_bf_order, 'astar')
+        else:
+            results['BF'] = None
+
+        # --- 4. RASTGELE ROTA ---
         rnd_items = sorted(self.items.copy());
         random.shuffle(rnd_items)
-        dist, vis, turns, path = self.calculate_metrics(rnd_items, algo_type='astar')
-        results['RND'] = {'dist': dist, 'time': (time.time() - t_start) * 1000, 'turns': turns, 'path': path,
-                          'vis': vis}
+        results['RND']['A*'] = self.calculate_metrics(rnd_items, 'astar')
 
         random.setstate(random_state)
-
-        # D) Pathfinding Kıyaslama
-        best_order = best_sol
-        _, astar_vis, _, _ = self.calculate_metrics(best_order, algo_type='astar')
-        _, dij_vis, _, _ = self.calculate_metrics(best_order, algo_type='dijkstra')
-        _, bfs_vis, _, _ = self.calculate_metrics(best_order, algo_type='bfs')
-
-        results['Pathfinding'] = {'A*': astar_vis, 'Dijkstra': dij_vis, 'BFS': bfs_vis}
-
         return results
 
     def clear_paths(self):
         self.active_paths = []
         self.update()
 
-    def add_path(self, path, color, width):
-        self.active_paths.append({'path': path, 'color': color, 'width': width})
+    def add_path(self, path, color, width, style=Qt.SolidLine):
+        self.active_paths.append({'path': path, 'color': color, 'width': width, 'style': style})
         self.update()
 
     def paintEvent(self, event):
@@ -279,12 +291,13 @@ class WarehouseSimulation(QWidget):
                 else:
                     painter.setBrush(QBrush(QColor(245, 245, 245)))
                 painter.setPen(QPen(QColor(220, 220, 220)))
-                painter.drawRect(c * w, r * h, w, h)
+                painter.drawRect(int(c * w), int(r * h), int(w), int(h))
 
         for path_data in self.active_paths:
             path = path_data['path']
             if not path: continue
             pen = QPen(path_data['color'], path_data['width'])
+            pen.setStyle(path_data.get('style', Qt.SolidLine))
             pen.setJoinStyle(Qt.MiterJoin)
             painter.setPen(pen)
             for i in range(len(path) - 1):
@@ -309,8 +322,9 @@ class WarehouseSimulation(QWidget):
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Depo Analiz: Optimizasyon Başarısı (ROI)")
-        self.setGeometry(50, 50, 1400, 850)
+        self.setWindowTitle("Algoritma Laboratuvarı: K-NN, SA ve BF Analizi")
+        self.setGeometry(50, 50, 1500, 900)
+        self.results_cache = None
 
         main_widget = QWidget()
         self.setCentralWidget(main_widget)
@@ -323,9 +337,10 @@ class MainWindow(QMainWindow):
         ctrl = QGroupBox("Kontroller")
         clayout = QVBoxLayout()
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("Sipariş Sayısı:"));
+        h1.addWidget(QLabel("Sipariş Sayısı (Max 100):"))
         self.spin = QSpinBox();
-        self.spin.setValue(8);
+        self.spin.setValue(6);
+        self.spin.setRange(2, 100)
         h1.addWidget(self.spin)
         clayout.addLayout(h1)
         h2 = QHBoxLayout()
@@ -334,17 +349,40 @@ class MainWindow(QMainWindow):
         b2 = QPushButton("Sipariş Ver");
         b2.clicked.connect(self.order)
         b3 = QPushButton("HESAPLA");
-        b3.clicked.connect(self.run)
+        b3.clicked.connect(self.run_calculations)
         b3.setStyleSheet("background-color: #4CAF50; color: white; font-weight: bold;")
         h2.addWidget(b1);
         h2.addWidget(b2);
         h2.addWidget(b3)
         clayout.addLayout(h2)
-        lbl_info = QLabel("Mavi: K-NN | Yeşil: SA")
-        lbl_info.setStyleSheet("font-weight: bold; color: #333;")
-        clayout.addWidget(lbl_info)
         ctrl.setLayout(clayout)
         left_layout.addWidget(ctrl, stretch=1)
+
+        vis_group = QGroupBox("Görselleştirme")
+        vis_layout = QGridLayout()
+        self.check_knn_astar = QCheckBox("K-NN + A* (Mavi)");
+        self.check_knn_astar.setChecked(True)
+        self.check_knn_dijk = QCheckBox("K-NN + Dij (Turkuaz)")
+        self.check_knn_bfs = QCheckBox("K-NN + BFS (Mor)")
+        self.check_sa_astar = QCheckBox("SA + A* (Yeşil)");
+        self.check_sa_astar.setChecked(True)
+        self.check_sa_dijk = QCheckBox("SA + Dij (Açık Yeşil)")
+        self.check_sa_bfs = QCheckBox("SA + BFS (Sarı)")
+        self.check_bf = QCheckBox("BRUTE FORCE (Altın)")
+
+        for chk in [self.check_knn_astar, self.check_knn_dijk, self.check_knn_bfs,
+                    self.check_sa_astar, self.check_sa_dijk, self.check_sa_bfs, self.check_bf]:
+            chk.stateChanged.connect(self.update_visualization)
+
+        vis_layout.addWidget(self.check_knn_astar, 0, 0);
+        vis_layout.addWidget(self.check_knn_dijk, 1, 0);
+        vis_layout.addWidget(self.check_knn_bfs, 2, 0)
+        vis_layout.addWidget(self.check_sa_astar, 0, 1);
+        vis_layout.addWidget(self.check_sa_dijk, 1, 1);
+        vis_layout.addWidget(self.check_sa_bfs, 2, 1)
+        vis_layout.addWidget(self.check_bf, 3, 0, 1, 2)
+        vis_group.setLayout(vis_layout)
+        left_layout.addWidget(vis_group, stretch=1)
 
         right_layout = QVBoxLayout()
         self.figure = plt.figure()
@@ -357,73 +395,176 @@ class MainWindow(QMainWindow):
         self.sim.generate_warehouse()
         self.figure.clear();
         self.canvas.draw()
+        self.results_cache = None
 
     def order(self):
         self.sim.generate_order(self.spin.value())
-        QMessageBox.information(self, "Bilgi", "Ürünler yerleştirildi.")
+        self.results_cache = None
 
-    def run(self):
-        res = self.sim.run_full_analysis()
-        if not res: return
+    def run_calculations(self):
+        if self.spin.value() > 11:
+            QMessageBox.warning(self, "Uyarı", "Ürün sayısı 9'dan fazla! Brute Force hesaplanmayacak.")
+        self.results_cache = self.sim.run_full_analysis()
+        if not self.results_cache: return
+        self.update_visualization()
+        self.draw_graphs()
 
+    def update_visualization(self):
+        if not self.results_cache: return
         self.sim.clear_paths()
-        self.sim.add_path(res['KNN']['path'], QColor(0, 0, 255, 100), 6)
-        self.sim.add_path(res['SA']['path'], QColor(0, 255, 0, 255), 2)
+        res = self.results_cache
 
+        if self.check_knn_astar.isChecked(): self.sim.add_path(res['KNN']['A*']['path'], QColor(0, 0, 255, 120), 6)
+        if self.check_knn_dijk.isChecked(): self.sim.add_path(res['KNN']['Dijkstra']['path'], QColor(0, 255, 255, 120),
+                                                              4, Qt.DashLine)
+        if self.check_knn_bfs.isChecked(): self.sim.add_path(res['KNN']['BFS']['path'], QColor(128, 0, 128, 120), 2,
+                                                             Qt.DotLine)
+
+        if self.check_sa_astar.isChecked(): self.sim.add_path(res['SA']['A*']['path'], QColor(0, 255, 0, 200), 3)
+        if self.check_sa_dijk.isChecked(): self.sim.add_path(res['SA']['Dijkstra']['path'], QColor(144, 238, 144, 200),
+                                                             2, Qt.DashLine)
+        if self.check_sa_bfs.isChecked(): self.sim.add_path(res['SA']['BFS']['path'], QColor(255, 215, 0, 200), 2,
+                                                            Qt.DotLine)
+
+        if self.check_bf.isChecked() and res['BF']:
+            self.sim.add_path(res['BF']['path'], QColor(255, 215, 0, 255), 4)
+
+    def draw_graphs(self):
         self.figure.clear()
+        res = self.results_cache
 
+        # Grafikleri 2x3 grid olarak ayarla (toplam 6 grafik)
         ax1 = self.figure.add_subplot(231)
         ax2 = self.figure.add_subplot(232)
         ax3 = self.figure.add_subplot(233)
         ax4 = self.figure.add_subplot(234)
         ax5 = self.figure.add_subplot(235)
+        ax6 = self.figure.add_subplot(236)  # VERİMLİLİK PUANI
 
-        algos = ['RND', 'K-NN', 'SA']
-        colors = ['gray', 'blue', 'green']
+        # Grafik Verileri (RND YOK)
+        algos = ['K-NN', 'SA']
+        dists = [res['KNN']['A*']['dist'], res['SA']['A*']['dist']]
+        colors = ['blue', 'green']
 
-        # 1. Mesafe
-        ax1.bar(algos, [res['RND']['dist'], res['KNN']['dist'], res['SA']['dist']], color=colors)
-        ax1.set_title('Toplam Mesafe')
+        if res['BF']:
+            algos.append('BF (Opt)')
+            dists.append(res['BF']['dist'])
+            colors.append('gold')
 
-        # 2. Verimlilik (A* vs Dijkstra vs BFS)
-        pf_names = ['A*', 'Dijkstra', 'BFS']
-        pf_vals = [res['Pathfinding']['A*'], res['Pathfinding']['Dijkstra'], res['Pathfinding']['BFS']]
-        pf_colors = ['green', 'red', 'orange']
-        ax2.bar(pf_names, pf_vals, color=pf_colors)
-        ax2.set_title('İncelenen Düğüm (Efficiency)')
-        ax2.set_ylabel('Kare')
-        for i, v in enumerate(pf_vals):
-            ax2.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
+        # 1. Genel Rota Mesafesi (BF Dahil)
+        ax1.bar(algos, dists, color=colors)
+        ax1.set_title('EN Kısa Mesafe')
+        ax1.set_ylabel('Birim')
+        for i, v in enumerate(dists): ax1.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
 
-        # 3. Süre
-        ax3.plot(algos, [res['RND']['time'], res['KNN']['time'], res['SA']['time']], marker='o', color='purple')
-        ax3.set_title('Süre (ms)')
-        ax3.grid(True)
+        # 2. Algoritma Tutarlılığı (Sağlama)
+        labels = ['A*', 'Dij', 'BFS']
+        knn_lens = [res['KNN']['A*']['dist'], res['KNN']['Dijkstra']['dist'], res['KNN']['BFS']['dist']]
+        sa_lens = [res['SA']['A*']['dist'], res['SA']['Dijkstra']['dist'], res['SA']['BFS']['dist']]
+        x = np.arange(len(labels));
+        width = 0.35
+        ax2.bar(x - width / 2, knn_lens, width, label='K-NN', color='blue', alpha=0.6)
+        ax2.bar(x + width / 2, sa_lens, width, label='SA', color='green', alpha=0.6)
+        ax2.set_title('Mesafe')
+        ax2.set_xticks(x);
+        ax2.set_xticklabels(labels)
+        ax2.legend(fontsize='x-small')
 
-        # 4. Dönüş
-        ax4.bar(algos, [res['RND']['turns'], res['KNN']['turns'], res['SA']['turns']], color=['gray', 'cyan', 'orange'])
-        ax4.set_title('Dönüş Sayısı')
+        # 3. Verimlilik
+        knn_vis = [res['KNN']['A*']['vis'], res['KNN']['Dijkstra']['vis'], res['KNN']['BFS']['vis']]
+        sa_vis = [res['SA']['A*']['vis'], res['SA']['Dijkstra']['vis'], res['SA']['BFS']['vis']]
+        ax3.bar(x - width / 2, knn_vis, width, color='blue', alpha=0.6)
+        ax3.bar(x + width / 2, sa_vis, width, color='green', alpha=0.6)
+        ax3.set_title('Verimlilik (Gezilen Düğüm)')
+        ax3.set_xticks(x);
+        ax3.set_xticklabels(labels)
 
-        # 5. YENİ GRAFİK: OPTİMİZASYON KAZANCI (%)
-        # Rastgele (Random) rotaya göre ne kadar iyileştirme yapıldı?
-        rnd_dist = res['RND']['dist']
+        # 4. Süre
+        knn_time = [res['KNN']['A*']['time'], res['KNN']['Dijkstra']['time'], res['KNN']['BFS']['time']]
+        sa_time = [res['SA']['A*']['time'], res['SA']['Dijkstra']['time'], res['SA']['BFS']['time']]
+        ax4.bar(x - width / 2, knn_time, width, color='blue', alpha=0.6)
+        ax4.bar(x + width / 2, sa_time, width, color='green', alpha=0.6)
+        ax4.set_title('Hesaplama Süresi (ms)')
+        ax4.set_xticks(x);
+        ax4.set_xticklabels(labels)
+
+        # 5. Optimizasyon Kazancı (BF Dahil)
+        rnd_dist = res['RND']['A*']['dist']
+        gains = []
+        glabels = []
+        gcolors = []
+
         if rnd_dist > 0:
-            knn_gain = (rnd_dist - res['KNN']['dist']) / rnd_dist * 100
-            sa_gain = (rnd_dist - res['SA']['dist']) / rnd_dist * 100
-        else:
-            knn_gain = sa_gain = 0
+            gains.append((rnd_dist - res['KNN']['A*']['dist']) / rnd_dist * 100)
+            glabels.append('K-NN')
+            gcolors.append('blue')
 
-        gains = [knn_gain, sa_gain]
-        gain_labels = ['K-NN', 'SA']
-        bars = ax5.bar(gain_labels, gains, color=['blue', 'green'])
+            gains.append((rnd_dist - res['SA']['A*']['dist']) / rnd_dist * 100)
+            glabels.append('SA')
+            gcolors.append('green')
+
+            if res['BF']:
+                gains.append((rnd_dist - res['BF']['dist']) / rnd_dist * 100)
+                glabels.append('BF')
+                gcolors.append('gold')
+
+        bars = ax5.bar(glabels, gains, color=gcolors)
         ax5.set_title('Optimizasyon Kazancı (%)')
-        ax5.set_ylabel('% Tasarruf')
-        ax5.set_ylim(0, 100)  # 0 ile 100 arası sabitle
+        ax5.set_ylim(0, 100)
+        for b in bars: ax5.text(b.get_x() + b.get_width() / 2, b.get_height(), f'%{b.get_height():.1f}', ha='center',
+                                va='bottom')
 
-        for bar in bars:
-            height = bar.get_height()
-            ax5.text(bar.get_x() + bar.get_width() / 2., height,
-                     f'%{height:.1f}', ha='center', va='bottom', fontweight='bold')
+        # ---------------------------------------------------------
+        # 6. (DÜZELTİLMİŞ) VERİMLİLİK PUANI
+        # Mantık: BF'nin süresi artsa bile puanı DÜŞMELİ.
+        # Eski formüldeki +10 sabiti kaldırıldı, zaman etkisi artırıldı.
+        # ---------------------------------------------------------
+
+        comp_labels = []
+        scores = []
+        bar_colors = []
+
+        # Puan hesaplama yardımcı fonksiyonu (YENİ FORMÜL)
+        def calculate_score(dist, time_ms):
+            if dist == 0: return 0
+            # Buffer'ı +10'dan +0.5'e indirdim.
+            # Artık 0.1ms (KNN) ile 20ms (BF) arasında 200 kat puan farkı oluşacak.
+            return 10000000 / (dist * (time_ms + 0.5))
+
+        # K-NN varyasyonları
+        for sub in ['A*', 'Dijkstra', 'BFS']:
+            comp_labels.append(f"KNN\n{sub}")
+            s = calculate_score(res['KNN'][sub]['dist'], res['KNN'][sub]['time'])
+            scores.append(s)
+            bar_colors.append('lightblue')
+
+        # SA varyasyonları
+        for sub in ['A*', 'Dijkstra', 'BFS']:
+            comp_labels.append(f"SA\n{sub}")
+            s = calculate_score(res['SA'][sub]['dist'], res['SA'][sub]['time'])
+            scores.append(s)
+            bar_colors.append('lightgreen')
+
+        # Brute Force
+        if res['BF']:
+            comp_labels.append("BF")
+            s = calculate_score(res['BF']['dist'], res['BF']['time'])
+            scores.append(s)
+            bar_colors.append('gold')
+
+        # Çizim
+        score_bars = ax6.bar(comp_labels, scores, color=bar_colors, edgecolor='black', alpha=0.8)
+        ax6.set_title('TOPLAM VERİMLİLİK PUANI\n(Hız Kriteri Artırıldı)', fontsize=9, fontweight='bold',
+                      color='darkred')
+        ax6.set_ylabel('Verimlilik Skoru', fontsize=9)
+        ax6.tick_params(axis='x', labelsize=7, rotation=15)
+        ax6.grid(axis='y', linestyle='--', alpha=0.3)
+
+        # Değerleri yaz
+        for bar in score_bars:
+            h = bar.get_height()
+            ax6.text(bar.get_x() + bar.get_width() / 2, h, f"{int(h)}", ha='center', va='bottom', fontsize=8,
+                     fontweight='bold')
 
         self.figure.tight_layout()
         self.canvas.draw()
