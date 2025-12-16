@@ -14,15 +14,11 @@ from PyQt5.QtCore import Qt
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# --- AYARLAR ---
-GRID_SIZE = 55
-OBSTACLE_DENSITY = 0.8
+# AYARLAR
+DEPO_BOYUTU = 55
+ENGEL_ORANI = 0.8
 
-
-# --------------------------
-# ALGORİTMA MOTORU
-# --------------------------
-class Pathfinder:
+class YolBulucu:
     def __init__(self, grid):
         self.grid = grid
         self.rows = len(grid)
@@ -31,51 +27,51 @@ class Pathfinder:
     def heuristic(self, a, b, use_heuristic):
         return (abs(a[0] - b[0]) + abs(a[1] - b[1])) if use_heuristic else 0
 
-    def get_neighbors(self, node):
-        neighbors = []
+    def komsu_bul(self, node):
+        komsu = []
         for dx, dy in [(-1, 0), (1, 0), (0, -1), (0, 1)]:
             nx, ny = node[0] + dx, node[1] + dy
             if 0 <= nx < self.rows and 0 <= ny < self.cols:
                 if self.grid[nx][ny] == 0:
-                    neighbors.append((nx, ny))
-        return neighbors
+                    komsu.append((nx, ny))
+        return komsu
 
-    def find_path_weighted(self, start, goal, use_heuristic=True):
+    def agirlikliyolbul(self, start, goal, use_heuristic=True):
         open_set = []
         heapq.heappush(open_set, (0, 0, start))
-        came_from = {}
+        geldigi = {}
         g_score = {start: 0}
         f_score = {start: self.heuristic(start, goal, use_heuristic)}
-        visited_nodes = set()
-        counter = 1
+        gezilen_dugum = set()
+        sayac = 1
 
         while open_set:
             current = heapq.heappop(open_set)[2]
-            visited_nodes.add(current)
+            gezilen_dugum.add(current)
 
             if current == goal:
                 path = []
-                while current in came_from:
+                while current in geldigi:
                     path.append(current)
-                    current = came_from[current]
+                    current = geldigi[current]
                 path.append(start)
-                return path[::-1], len(visited_nodes)
+                return path[::-1], len(gezilen_dugum)
 
-            for neighbor in self.get_neighbors(current):
+            for neighbor in self.komsu_bul(current):
                 tentative_g_score = g_score[current] + 1
                 if neighbor not in g_score or tentative_g_score < g_score[neighbor]:
-                    came_from[neighbor] = current
+                    geldigi[neighbor] = current
                     g_score[neighbor] = tentative_g_score
                     h = self.heuristic(neighbor, goal, use_heuristic)
                     f_score[neighbor] = tentative_g_score + h
-                    heapq.heappush(open_set, (f_score[neighbor], counter, neighbor))
-                    counter += 1
-        return [], len(visited_nodes)
+                    heapq.heappush(open_set, (f_score[neighbor], sayac, neighbor))
+                    sayac += 1
+        return [], len(gezilen_dugum)
 
-    def find_path_bfs(self, start, goal):
+    def bfsyolbul(self, start, goal):
         queue = deque([start])
-        came_from = {start: None}
-        visited_nodes = set([start])
+        geldigiDugum = {start: None}
+        gezilenDugum = set([start])
 
         while queue:
             current = queue.popleft()
@@ -83,44 +79,41 @@ class Pathfinder:
                 path = []
                 while current is not None:
                     path.append(current)
-                    current = came_from[current]
-                return path[::-1], len(visited_nodes)
+                    current = geldigiDugum[current]
+                return path[::-1], len(gezilenDugum)
 
-            for neighbor in self.get_neighbors(current):
-                if neighbor not in visited_nodes:
-                    visited_nodes.add(neighbor)
-                    came_from[neighbor] = current
+            for neighbor in self.komsu_bul(current):
+                if neighbor not in gezilenDugum:
+                    gezilenDugum.add(neighbor)
+                    geldigiDugum[neighbor] = current
                     queue.append(neighbor)
-        return [], len(visited_nodes)
+        return [], len(gezilenDugum)
 
 
-# --------------------------
-# SİMÜLASYON YÖNETİCİSİ
-# --------------------------
-class WarehouseSimulation(QWidget):
+class DepoSim(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.grid = np.zeros((GRID_SIZE, GRID_SIZE))
+        self.grid = np.zeros((DEPO_BOYUTU, DEPO_BOYUTU))
         self.items = []
         self.start_pos = (0, 0)
         self.active_paths = []
         self.pathfinder = None
-        self.generate_warehouse()
+        self.DepoOlustur()
 
-    def generate_warehouse(self):
-        self.grid = np.zeros((GRID_SIZE, GRID_SIZE))
+    def DepoOlustur(self):
+        self.grid = np.zeros((DEPO_BOYUTU, DEPO_BOYUTU))
         c = 1
-        while c < GRID_SIZE - 1:
-            if abs(c - GRID_SIZE // 2) < 2:
+        while c < DEPO_BOYUTU - 1:
+            if abs(c - DEPO_BOYUTU // 2) < 2:
                 c += 1
                 continue
             if random.random() < 0.7:
                 shelf_width = 1
-                if c < GRID_SIZE - 2 and random.random() < 0.3: shelf_width = 2
+                if c < DEPO_BOYUTU - 2 and random.random() < 0.3: shelf_width = 2
                 r = 1
-                while r < GRID_SIZE - 1:
+                while r < DEPO_BOYUTU - 1:
                     block_len = random.randint(3, 8)
-                    if r + block_len >= GRID_SIZE - 1: block_len = GRID_SIZE - 1 - r
+                    if r + block_len >= DEPO_BOYUTU - 1: block_len = DEPO_BOYUTU - 1 - r
                     for k in range(block_len):
                         self.grid[r + k][c] = 1
                         if shelf_width == 2: self.grid[r + k][c + 1] = 1
@@ -131,23 +124,23 @@ class WarehouseSimulation(QWidget):
             else:
                 c += 1
 
-        mid_col = GRID_SIZE // 2
+        mid_col = DEPO_BOYUTU // 2
         safe_r = 0
-        while safe_r < GRID_SIZE and self.grid[safe_r][mid_col] == 1:
+        while safe_r < DEPO_BOYUTU and self.grid[safe_r][mid_col] == 1:
             safe_r += 1
-        if safe_r >= GRID_SIZE: safe_r = 0
+        if safe_r >= DEPO_BOYUTU: safe_r = 0
         self.start_pos = (safe_r, mid_col)
 
-        self.pathfinder = Pathfinder(self.grid)
+        self.pathfinder = YolBulucu(self.grid)
         self.items = []
         self.active_paths = []
         self.update()
 
-    def generate_order(self, count):
+    def olusturmaduzeni(self, count):
         self.items = []
         attempts = 0
         while len(self.items) < count and attempts < 3000:
-            rx, ry = random.randint(0, GRID_SIZE - 1), random.randint(0, GRID_SIZE - 1)
+            rx, ry = random.randint(0, DEPO_BOYUTU - 1), random.randint(0, DEPO_BOYUTU - 1)
             if self.grid[rx][ry] == 0 and (rx, ry) != self.start_pos:
                 if (rx, ry) not in self.items:
                     self.items.append((rx, ry))
@@ -155,177 +148,168 @@ class WarehouseSimulation(QWidget):
         self.active_paths = []
         self.update()
 
-    # Calculate Metrics: Sadece yürütülen yolun çizimi ve metrikleri
-    def calculate_metrics(self, order, algo_type='astar'):
-        total_dist = 0;
-        total_visited = 0;
-        total_turns = 0
-        full_path = []
+    def hesaplama(self, order, algo_type='astar'):
+        toplamMesafe = 0;
+        toplamGidilen = 0;
+        toplamDonus = 0
+        ButunMesafe = []
         curr = self.start_pos
         last_dx, last_dy = 0, 0
 
-        t_start = time.time()  # Sadece path bulma süresi
+        t_start = time.time()
 
         for item in order:
             if algo_type == 'astar':
-                path, visited = self.pathfinder.find_path_weighted(curr, item, use_heuristic=True)
+                yol, gidilen = self.pathfinder.agirlikliyolbul(curr, item, use_heuristic=True)
             elif algo_type == 'dijkstra':
-                path, visited = self.pathfinder.find_path_weighted(curr, item, use_heuristic=False)
+                yol, gidilen = self.pathfinder.agirlikliyolbul(curr, item, use_heuristic=False)
             elif algo_type == 'bfs':
-                path, visited = self.pathfinder.find_path_bfs(curr, item)
+                yol, gidilen = self.pathfinder.bfsyolbul(curr, item)
             else:
-                path, visited = [], 0
+                yol, gidilen = [], 0
 
-            total_visited += visited
-            if len(path) > 1:
-                total_dist += len(path) - 1
-                for i in range(len(path) - 1):
-                    p1, p2 = path[i], path[i + 1]
+            toplamGidilen += gidilen
+            if len(yol) > 1:
+                toplamMesafe += len(yol) - 1
+                for i in range(len(yol) - 1):
+                    p1, p2 = yol[i], yol[i + 1]
                     dx, dy = p2[0] - p1[0], p2[1] - p1[1]
                     if (last_dx, last_dy) != (0, 0) and (dx, dy) != (last_dx, last_dy):
-                        total_turns += 1
+                        toplamDonus += 1
                     last_dx, last_dy = dx, dy
 
-                if not full_path:
-                    full_path.extend(path)
+                if not ButunMesafe:
+                    ButunMesafe.extend(yol)
                 else:
-                    full_path.extend(path[1:])
+                    ButunMesafe.extend(yol[1:])
             curr = item
 
         t_end = time.time()
-        # 'time' değişkeni burada sadece yürüme süresini tutuyor.
-        # Run_full_analysis içinde buna "Düşünme Süresi" eklenecek.
+
         return {
-            'dist': total_dist,
-            'vis': total_visited,
-            'turns': total_turns,
+            'dist': toplamMesafe,
+            'vis': toplamGidilen,
+            'turns': toplamDonus,
             'time': (t_end - t_start) * 1000,
-            'path': full_path
+            'path': ButunMesafe
         }
 
-    # --- HESAPLAMA SÜRELERİNİ ÖLÇEN FONKSİYON ---
-    def run_full_analysis(self):
+    def analiz(self):
         if not self.items: return None
         results = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
 
         random_state = random.getstate()
         random.seed(str(self.items))
 
-        # --- 1. K-NN ROTA (Düşünme Süresi) ---
         t_knn_start = time.time()
 
-        unvisited = sorted(self.items.copy())
+        gidilmeyen = sorted(self.items.copy())
         curr = self.start_pos;
         knn_order = []
-        while unvisited:
-            nearest = min(unvisited, key=lambda x: abs(x[0] - curr[0]) + abs(x[1] - curr[1]))
+        while gidilmeyen:
+            nearest = min(gidilmeyen, key=lambda x: abs(x[0] - curr[0]) + abs(x[1] - curr[1]))
             knn_order.append(nearest);
-            unvisited.remove(nearest);
+            gidilmeyen.remove(nearest);
             curr = nearest
 
         t_knn_end = time.time()
         knn_comp_time = (t_knn_end - t_knn_start) * 1000
 
-        # Sonuçlara ekle
-        r_astar = self.calculate_metrics(knn_order, 'astar')
+        r_astar = self.hesaplama(knn_order, 'astar')
         r_astar['time'] += knn_comp_time
         results['KNN']['A*'] = r_astar
 
-        r_dijk = self.calculate_metrics(knn_order, 'dijkstra')
+        r_dijk = self.hesaplama(knn_order, 'dijkstra')
         r_dijk['time'] += knn_comp_time
         results['KNN']['Dijkstra'] = r_dijk
 
-        r_bfs = self.calculate_metrics(knn_order, 'bfs')
+        r_bfs = self.hesaplama(knn_order, 'bfs')
         r_bfs['time'] += knn_comp_time
         results['KNN']['BFS'] = r_bfs
 
-        # --- 2. SA ROTA (Düşünme Süresi) ---
         t_sa_start = time.time()
 
         curr_sol = sorted(self.items.copy());
         random.shuffle(curr_sol)
 
-        def cost(sol):
+        def maliyet(sol):
             d = 0;
             c = self.start_pos
             for i in sol: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
             return d
 
         best_sol = list(curr_sol);
-        best_cost = cost(curr_sol)
+        best_cost = maliyet(curr_sol)
         temp = 1000.0
         for _ in range(1000):
             new_sol = list(curr_sol)
             i1, i2 = random.sample(range(len(new_sol)), 2)
             new_sol[i1], new_sol[i2] = new_sol[i2], new_sol[i1]
-            current_c = cost(curr_sol);
-            new_c = cost(new_sol)
+            current_c = maliyet(curr_sol);
+            new_c = maliyet(new_sol)
             if new_c < current_c or random.random() < math.exp((current_c - new_c) / temp):
                 curr_sol = new_sol
-                if cost(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = cost(curr_sol)
+                if maliyet(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = maliyet(curr_sol)
             temp *= 0.99
 
         t_sa_end = time.time()
         sa_comp_time = (t_sa_end - t_sa_start) * 1000
 
-        r_sa_astar = self.calculate_metrics(best_sol, 'astar')
+        r_sa_astar = self.hesaplama(best_sol, 'astar')
         r_sa_astar['time'] += sa_comp_time
         results['SA']['A*'] = r_sa_astar
 
-        r_sa_dijk = self.calculate_metrics(best_sol, 'dijkstra')
+        r_sa_dijk = self.hesaplama(best_sol, 'dijkstra')
         r_sa_dijk['time'] += sa_comp_time
         results['SA']['Dijkstra'] = r_sa_dijk
 
-        r_sa_bfs = self.calculate_metrics(best_sol, 'bfs')
+        r_sa_bfs = self.hesaplama(best_sol, 'bfs')
         r_sa_bfs['time'] += sa_comp_time
         results['SA']['BFS'] = r_sa_bfs
 
-        # --- 3. BRUTE FORCE (Düşünme Süresi) ---
         if len(self.items) <=11:
             t_bf_start = time.time()
 
-            best_bf_order = None
-            min_bf_dist = float('inf')
-            # Permütasyon hesabı (Ağır işlem)
+            bestBForder = None
+            minBForder = float('inf')
             for p in itertools.permutations(self.items):
                 d = 0;
                 c = self.start_pos
                 for i in p: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
-                if d < min_bf_dist: min_bf_dist = d; best_bf_order = list(p)
+                if d < minBForder: minBForder = d; bestBForder = list(p)
 
             t_bf_end = time.time()
             bf_comp_time = (t_bf_end - t_bf_start) * 1000
 
-            r_bf = self.calculate_metrics(best_bf_order, 'astar')
+            r_bf = self.hesaplama(bestBForder, 'astar')
             r_bf['time'] += bf_comp_time
             results['BF'] = r_bf
         else:
             results['BF'] = None
 
-        # --- 4. RASTGELE ROTA ---
         rnd_items = sorted(self.items.copy());
         random.shuffle(rnd_items)
-        results['RND']['A*'] = self.calculate_metrics(rnd_items, 'astar')
+        results['RND']['A*'] = self.hesaplama(rnd_items, 'astar')
 
         random.setstate(random_state)
         return results
 
-    def clear_paths(self):
+    def rotaTemizle(self):
         self.active_paths = []
         self.update()
 
-    def add_path(self, path, color, width, style=Qt.SolidLine):
+    def rotaEkle(self, path, color, width, style=Qt.SolidLine):
         self.active_paths.append({'path': path, 'color': color, 'width': width, 'style': style})
         self.update()
 
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        w = self.width() / GRID_SIZE
-        h = self.height() / GRID_SIZE
+        w = self.width() / DEPO_BOYUTU
+        h = self.height() / DEPO_BOYUTU
 
-        for r in range(GRID_SIZE):
-            for c in range(GRID_SIZE):
+        for r in range(DEPO_BOYUTU):
+            for c in range(DEPO_BOYUTU):
                 if self.grid[r][c] == 1:
                     painter.setBrush(QBrush(QColor(60, 60, 60)))
                 else:
@@ -356,13 +340,10 @@ class WarehouseSimulation(QWidget):
                             int(h * 0.6))
 
 
-# --------------------------
-# ANA ARAYÜZ
-# --------------------------
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Algoritma Laboratuvarı: K-NN, SA ve BF Analizi")
+        self.setWindowTitle("Depo Ürün Toplama Optimizasyonu")
         self.setGeometry(50, 50, 1500, 900)
         self.results_cache = None
 
@@ -371,7 +352,7 @@ class MainWindow(QMainWindow):
         layout = QHBoxLayout(main_widget)
 
         left_layout = QVBoxLayout()
-        self.sim = WarehouseSimulation()
+        self.sim = DepoSim()
         left_layout.addWidget(self.sim, stretch=6)
 
         ctrl = QGroupBox("Kontroller")
@@ -406,7 +387,7 @@ class MainWindow(QMainWindow):
         self.check_knn_bfs = QCheckBox("K-NN + BFS (Mor)")
         self.check_sa_astar = QCheckBox("SA + A* (Yeşil)");
         self.check_sa_astar.setChecked(True)
-        self.check_sa_dijk = QCheckBox("SA + Dij (Açık Yeşil)")
+        self.check_sa_dijk = QCheckBox("SA + Dij (Gri)")
         self.check_sa_bfs = QCheckBox("SA + BFS (Sarı)")
         self.check_bf = QCheckBox("BRUTE FORCE (Altın)")
 
@@ -432,40 +413,40 @@ class MainWindow(QMainWindow):
         layout.addLayout(right_layout, stretch=4)
 
     def reset(self):
-        self.sim.generate_warehouse()
+        self.sim.DepoOlustur()
         self.figure.clear();
         self.canvas.draw()
         self.results_cache = None
 
     def order(self):
-        self.sim.generate_order(self.spin.value())
+        self.sim.olusturmaduzeni(self.spin.value())
         self.results_cache = None
 
     def run_calculations(self):
-        self.results_cache = self.sim.run_full_analysis()
+        self.results_cache = self.sim.analiz()
         if not self.results_cache: return
         self.update_visualization()
         self.draw_graphs()
 
     def update_visualization(self):
         if not self.results_cache: return
-        self.sim.clear_paths()
+        self.sim.rotaTemizle()
         res = self.results_cache
 
-        if self.check_knn_astar.isChecked(): self.sim.add_path(res['KNN']['A*']['path'], QColor(0, 0, 255, 120), 6)
-        if self.check_knn_dijk.isChecked(): self.sim.add_path(res['KNN']['Dijkstra']['path'], QColor(0, 255, 255, 120),
+        if self.check_knn_astar.isChecked(): self.sim.rotaEkle(res['KNN']['A*']['path'], QColor(0, 0, 255, 120), 6)
+        if self.check_knn_dijk.isChecked(): self.sim.rotaEkle(res['KNN']['Dijkstra']['path'], QColor(0, 255, 255, 120),
                                                               4, Qt.DashLine)
-        if self.check_knn_bfs.isChecked(): self.sim.add_path(res['KNN']['BFS']['path'], QColor(128, 0, 128, 120), 2,
+        if self.check_knn_bfs.isChecked(): self.sim.rotaEkle(res['KNN']['BFS']['path'], QColor(128, 0, 128, 120), 2,
                                                              Qt.DotLine)
 
-        if self.check_sa_astar.isChecked(): self.sim.add_path(res['SA']['A*']['path'], QColor(0, 255, 0, 200), 3)
-        if self.check_sa_dijk.isChecked(): self.sim.add_path(res['SA']['Dijkstra']['path'], QColor(144, 238, 144, 200),
+        if self.check_sa_astar.isChecked(): self.sim.rotaEkle(res['SA']['A*']['path'], QColor(0, 255, 0, 200), 3)
+        if self.check_sa_dijk.isChecked(): self.sim.rotaEkle(res['SA']['Dijkstra']['path'], QColor(35, 70, 40, 200),
                                                              2, Qt.DashLine)
-        if self.check_sa_bfs.isChecked(): self.sim.add_path(res['SA']['BFS']['path'], QColor(255, 215, 0, 200), 2,
+        if self.check_sa_bfs.isChecked(): self.sim.rotaEkle(res['SA']['BFS']['path'], QColor(255, 215, 0, 200), 2,
                                                             Qt.DotLine)
 
         if self.check_bf.isChecked() and res['BF']:
-            self.sim.add_path(res['BF']['path'], QColor(255, 215, 0, 255), 4)
+            self.sim.rotaEkle(res['BF']['path'], QColor(255, 215, 0, 255), 4)
 
     def draw_graphs(self):
         self.figure.clear()
@@ -476,7 +457,6 @@ class MainWindow(QMainWindow):
         ax4 = self.figure.add_subplot(223)  # Sol Alt
         ax6 = self.figure.add_subplot(224)
 
-        # Grafik Verileri (RND YOK)
         algos = ['K-NN', 'SA']
         dists = [res['KNN']['A*']['dist'], res['SA']['A*']['dist']]
         colors = ['blue', 'green']
@@ -486,30 +466,23 @@ class MainWindow(QMainWindow):
             dists.append(res['BF']['dist'])
             colors.append('gold')
 
-        # 1. Genel Rota Mesafesi (BF Dahil)
         ax1.bar(algos, dists, color=colors)
         ax1.set_title('Mesafe')
         ax1.set_ylabel('Birim')
         for i, v in enumerate(dists): ax1.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
 
-        # 2. Algoritma Tutarlılığı
         labels = ['A*', 'Dij', 'BFS']
         x = np.arange(len(labels));
         width = 0.35
 
-        # 3. Verimlilik
         knn_vis = [res['KNN']['A*']['vis'], res['KNN']['Dijkstra']['vis'], res['KNN']['BFS']['vis']]
         sa_vis = [res['SA']['A*']['vis'], res['SA']['Dijkstra']['vis'], res['SA']['BFS']['vis']]
         ax3.bar(x - width / 2, knn_vis, width, color='blue', alpha=0.6)
         ax3.bar(x + width / 2, sa_vis, width, color='green', alpha=0.6)
-        ax3.set_title('Verimlilik (Gezilen Düğüm Sayısı)')
+        ax3.set_title('Verimlilik (Gezilen Düğüm Sayısı)     ')
         ax3.set_xticks(x);
         ax3.set_xticklabels(labels)
 
-        # -------------------------------------------------------------
-        # 4. GRAFİK (DEĞİŞTİRİLEN KISIM): BRUTE FORCE SÜRESİ EKLENDİ
-        # -------------------------------------------------------------
-        # Verileri hazırla
         time_labels = ['K-A*', 'K-Dij', 'K-BFS', 'S-A*', 'S-Dij', 'S-BFS']
         time_values = [
             res['KNN']['A*']['time'], res['KNN']['Dijkstra']['time'], res['KNN']['BFS']['time'],
@@ -517,37 +490,27 @@ class MainWindow(QMainWindow):
         ]
         time_colors = ['blue', 'blue', 'blue', 'green', 'green', 'green']
 
-        # Brute Force varsa listeye ekle
         if res['BF']:
             time_labels.append('BF')
             time_values.append(res['BF']['time'])
             time_colors.append('gold')
 
-        # Çizim
         ax4.bar(time_labels, time_values, color=time_colors)
         ax4.set_title('Hesaplama Süresi (Logaritmik)', fontsize=10)
         ax4.set_ylabel('Milisaniye (ms)', fontsize=9)
 
-        # LOGARİTMİK ÖLÇEK (Yoksa BF 2000 iken, diğerleri 0.1 görünmez)
         ax4.set_yscale('log')
 
-        # X Eksen yazılarını küçült sığsın
         ax4.tick_params(axis='x', labelsize=8)
 
-        # Değerleri yaz (Değer küçükse okunur formatta)
         for i, v in enumerate(time_values):
             txt = f"{v:.1f}" if v > 1 else f"{v:.2f}"
             ax4.text(i, v, txt, ha='center', va='bottom', fontsize=8, color='black')
 
-        # -------------------------------------------------------------
-
-
-        # 6. VERİMLİLİK PUANI
         comp_labels = []
         scores = []
         bar_colors = []
 
-        # Formül: Sabit / (Mesafe * (Süre + 1)^2)
         def calculate_score(dist, time_ms):
             if dist == 0: return 0
             time_penalty = (time_ms + 1) ** 2
@@ -572,7 +535,7 @@ class MainWindow(QMainWindow):
             bar_colors.append('gold')
 
         score_bars = ax6.bar(comp_labels, scores, color=bar_colors, edgecolor='black', alpha=0.8)
-        ax6.set_title('Verimlilik Puanı\n(Hesaplama Zamanı Dahil Edildi)', fontsize=9, fontweight='bold',
+        ax6.set_title('Verimlilik Puanı', fontsize=9, fontweight='bold',
                       color='darkred')
         ax6.set_ylabel('Verimlilik Skoru', fontsize=9)
         ax6.tick_params(axis='x', labelsize=7, rotation=15)
