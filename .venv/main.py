@@ -15,7 +15,7 @@ import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
 # --- AYARLAR ---
-GRID_SIZE = 80
+GRID_SIZE = 55
 OBSTACLE_DENSITY = 0.8
 
 
@@ -281,7 +281,7 @@ class WarehouseSimulation(QWidget):
         results['SA']['BFS'] = r_sa_bfs
 
         # --- 3. BRUTE FORCE (Düşünme Süresi) ---
-        if len(self.items) <= 9:
+        if len(self.items) <=11:
             t_bf_start = time.time()
 
             best_bf_order = None
@@ -377,7 +377,7 @@ class MainWindow(QMainWindow):
         ctrl = QGroupBox("Kontroller")
         clayout = QVBoxLayout()
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("Sipariş Sayısı (Max 100):"))
+        h1.addWidget(QLabel("Ürün Sayısı (Max 100):"))
         self.spin = QSpinBox();
         self.spin.setValue(6);
         self.spin.setRange(2, 100)
@@ -386,7 +386,7 @@ class MainWindow(QMainWindow):
         h2 = QHBoxLayout()
         b1 = QPushButton("Depo Üret");
         b1.clicked.connect(self.reset)
-        b2 = QPushButton("Sipariş Ver");
+        b2 = QPushButton("Ürünleri Yerleştir");
         b2.clicked.connect(self.order)
         b3 = QPushButton("HESAPLA");
         b3.clicked.connect(self.run_calculations)
@@ -422,14 +422,14 @@ class MainWindow(QMainWindow):
         vis_layout.addWidget(self.check_sa_bfs, 2, 1)
         vis_layout.addWidget(self.check_bf, 3, 0, 1, 2)
         vis_group.setLayout(vis_layout)
-        left_layout.addWidget(vis_group, stretch=1)
+        left_layout.addWidget(vis_group, stretch=3)
 
         right_layout = QVBoxLayout()
         self.figure = plt.figure()
         self.canvas = FigureCanvas(self.figure)
         right_layout.addWidget(self.canvas)
-        layout.addLayout(left_layout, stretch=4)
-        layout.addLayout(right_layout, stretch=5)
+        layout.addLayout(left_layout, stretch=5)
+        layout.addLayout(right_layout, stretch=4)
 
     def reset(self):
         self.sim.generate_warehouse()
@@ -442,8 +442,6 @@ class MainWindow(QMainWindow):
         self.results_cache = None
 
     def run_calculations(self):
-        if self.spin.value() > 9:
-            QMessageBox.warning(self, "Uyarı", "Ürün sayısı 9'dan fazla! Brute Force hesaplanmayacak.")
         self.results_cache = self.sim.run_full_analysis()
         if not self.results_cache: return
         self.update_visualization()
@@ -473,12 +471,10 @@ class MainWindow(QMainWindow):
         self.figure.clear()
         res = self.results_cache
 
-        ax1 = self.figure.add_subplot(231)
-        ax2 = self.figure.add_subplot(232)
-        ax3 = self.figure.add_subplot(233)
-        ax4 = self.figure.add_subplot(234)
-        ax5 = self.figure.add_subplot(235)
-        ax6 = self.figure.add_subplot(236)
+        ax1 = self.figure.add_subplot(221)  # Sol Üst
+        ax3 = self.figure.add_subplot(222)  # Sağ Üst
+        ax4 = self.figure.add_subplot(223)  # Sol Alt
+        ax6 = self.figure.add_subplot(224)
 
         # Grafik Verileri (RND YOK)
         algos = ['K-NN', 'SA']
@@ -492,29 +488,21 @@ class MainWindow(QMainWindow):
 
         # 1. Genel Rota Mesafesi (BF Dahil)
         ax1.bar(algos, dists, color=colors)
-        ax1.set_title('EN Kısa Mesafe')
+        ax1.set_title('Mesafe')
         ax1.set_ylabel('Birim')
         for i, v in enumerate(dists): ax1.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
 
         # 2. Algoritma Tutarlılığı
         labels = ['A*', 'Dij', 'BFS']
-        knn_lens = [res['KNN']['A*']['dist'], res['KNN']['Dijkstra']['dist'], res['KNN']['BFS']['dist']]
-        sa_lens = [res['SA']['A*']['dist'], res['SA']['Dijkstra']['dist'], res['SA']['BFS']['dist']]
         x = np.arange(len(labels));
         width = 0.35
-        ax2.bar(x - width / 2, knn_lens, width, label='K-NN', color='blue', alpha=0.6)
-        ax2.bar(x + width / 2, sa_lens, width, label='SA', color='green', alpha=0.6)
-        ax2.set_title('Mesafe')
-        ax2.set_xticks(x);
-        ax2.set_xticklabels(labels)
-        ax2.legend(fontsize='x-small')
 
         # 3. Verimlilik
         knn_vis = [res['KNN']['A*']['vis'], res['KNN']['Dijkstra']['vis'], res['KNN']['BFS']['vis']]
         sa_vis = [res['SA']['A*']['vis'], res['SA']['Dijkstra']['vis'], res['SA']['BFS']['vis']]
         ax3.bar(x - width / 2, knn_vis, width, color='blue', alpha=0.6)
         ax3.bar(x + width / 2, sa_vis, width, color='green', alpha=0.6)
-        ax3.set_title('Verimlilik (Gezilen Düğüm)')
+        ax3.set_title('Verimlilik (Gezilen Düğüm Sayısı)')
         ax3.set_xticks(x);
         ax3.set_xticklabels(labels)
 
@@ -553,31 +541,6 @@ class MainWindow(QMainWindow):
 
         # -------------------------------------------------------------
 
-        # 5. Optimizasyon Kazancı (BF Dahil)
-        rnd_dist = res['RND']['A*']['dist']
-        gains = []
-        glabels = []
-        gcolors = []
-
-        if rnd_dist > 0:
-            gains.append((rnd_dist - res['KNN']['A*']['dist']) / rnd_dist * 100)
-            glabels.append('K-NN')
-            gcolors.append('blue')
-
-            gains.append((rnd_dist - res['SA']['A*']['dist']) / rnd_dist * 100)
-            glabels.append('SA')
-            gcolors.append('green')
-
-            if res['BF']:
-                gains.append((rnd_dist - res['BF']['dist']) / rnd_dist * 100)
-                glabels.append('BF')
-                gcolors.append('gold')
-
-        bars = ax5.bar(glabels, gains, color=gcolors)
-        ax5.set_title('Optimizasyon Kazancı (%)')
-        ax5.set_ylim(0, 100)
-        for b in bars: ax5.text(b.get_x() + b.get_width() / 2, b.get_height(), f'%{b.get_height():.1f}', ha='center',
-                                va='bottom')
 
         # 6. VERİMLİLİK PUANI
         comp_labels = []
@@ -609,7 +572,7 @@ class MainWindow(QMainWindow):
             bar_colors.append('gold')
 
         score_bars = ax6.bar(comp_labels, scores, color=bar_colors, edgecolor='black', alpha=0.8)
-        ax6.set_title('TOPLAM VERİMLİLİK PUANI\n(Hesaplama Zamanı Dahil Edildi)', fontsize=9, fontweight='bold',
+        ax6.set_title('Verimlilik Puanı\n(Hesaplama Zamanı Dahil Edildi)', fontsize=9, fontweight='bold',
                       color='darkred')
         ax6.set_ylabel('Verimlilik Skoru', fontsize=9)
         ax6.tick_params(axis='x', labelsize=7, rotation=15)
