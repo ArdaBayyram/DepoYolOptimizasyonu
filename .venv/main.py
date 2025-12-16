@@ -155,6 +155,7 @@ class WarehouseSimulation(QWidget):
         self.active_paths = []
         self.update()
 
+    # Calculate Metrics: Sadece yürütülen yolun çizimi ve metrikleri
     def calculate_metrics(self, order, algo_type='astar'):
         total_dist = 0;
         total_visited = 0;
@@ -163,7 +164,7 @@ class WarehouseSimulation(QWidget):
         curr = self.start_pos
         last_dx, last_dy = 0, 0
 
-        t_start = time.time()
+        t_start = time.time()  # Sadece path bulma süresi
 
         for item in order:
             if algo_type == 'astar':
@@ -192,6 +193,8 @@ class WarehouseSimulation(QWidget):
             curr = item
 
         t_end = time.time()
+        # 'time' değişkeni burada sadece yürüme süresini tutuyor.
+        # Run_full_analysis içinde buna "Düşünme Süresi" eklenecek.
         return {
             'dist': total_dist,
             'vis': total_visited,
@@ -200,6 +203,7 @@ class WarehouseSimulation(QWidget):
             'path': full_path
         }
 
+    # --- HESAPLAMA SÜRELERİNİ ÖLÇEN FONKSİYON ---
     def run_full_analysis(self):
         if not self.items: return None
         results = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
@@ -207,7 +211,9 @@ class WarehouseSimulation(QWidget):
         random_state = random.getstate()
         random.seed(str(self.items))
 
-        # --- 1. K-NN ROTA ---
+        # --- 1. K-NN ROTA (Düşünme Süresi) ---
+        t_knn_start = time.time()
+
         unvisited = sorted(self.items.copy())
         curr = self.start_pos;
         knn_order = []
@@ -217,11 +223,25 @@ class WarehouseSimulation(QWidget):
             unvisited.remove(nearest);
             curr = nearest
 
-        results['KNN']['A*'] = self.calculate_metrics(knn_order, 'astar')
-        results['KNN']['Dijkstra'] = self.calculate_metrics(knn_order, 'dijkstra')
-        results['KNN']['BFS'] = self.calculate_metrics(knn_order, 'bfs')
+        t_knn_end = time.time()
+        knn_comp_time = (t_knn_end - t_knn_start) * 1000
 
-        # --- 2. SA ROTA ---
+        # Sonuçlara ekle
+        r_astar = self.calculate_metrics(knn_order, 'astar')
+        r_astar['time'] += knn_comp_time
+        results['KNN']['A*'] = r_astar
+
+        r_dijk = self.calculate_metrics(knn_order, 'dijkstra')
+        r_dijk['time'] += knn_comp_time
+        results['KNN']['Dijkstra'] = r_dijk
+
+        r_bfs = self.calculate_metrics(knn_order, 'bfs')
+        r_bfs['time'] += knn_comp_time
+        results['KNN']['BFS'] = r_bfs
+
+        # --- 2. SA ROTA (Düşünme Süresi) ---
+        t_sa_start = time.time()
+
         curr_sol = sorted(self.items.copy());
         random.shuffle(curr_sol)
 
@@ -245,20 +265,40 @@ class WarehouseSimulation(QWidget):
                 if cost(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = cost(curr_sol)
             temp *= 0.99
 
-        results['SA']['A*'] = self.calculate_metrics(best_sol, 'astar')
-        results['SA']['Dijkstra'] = self.calculate_metrics(best_sol, 'dijkstra')
-        results['SA']['BFS'] = self.calculate_metrics(best_sol, 'bfs')
+        t_sa_end = time.time()
+        sa_comp_time = (t_sa_end - t_sa_start) * 1000
 
-        # --- 3. BRUTE FORCE ---
-        if len(self.items) <= 11:
+        r_sa_astar = self.calculate_metrics(best_sol, 'astar')
+        r_sa_astar['time'] += sa_comp_time
+        results['SA']['A*'] = r_sa_astar
+
+        r_sa_dijk = self.calculate_metrics(best_sol, 'dijkstra')
+        r_sa_dijk['time'] += sa_comp_time
+        results['SA']['Dijkstra'] = r_sa_dijk
+
+        r_sa_bfs = self.calculate_metrics(best_sol, 'bfs')
+        r_sa_bfs['time'] += sa_comp_time
+        results['SA']['BFS'] = r_sa_bfs
+
+        # --- 3. BRUTE FORCE (Düşünme Süresi) ---
+        if len(self.items) <= 9:
+            t_bf_start = time.time()
+
             best_bf_order = None
             min_bf_dist = float('inf')
+            # Permütasyon hesabı (Ağır işlem)
             for p in itertools.permutations(self.items):
                 d = 0;
                 c = self.start_pos
                 for i in p: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
                 if d < min_bf_dist: min_bf_dist = d; best_bf_order = list(p)
-            results['BF'] = self.calculate_metrics(best_bf_order, 'astar')
+
+            t_bf_end = time.time()
+            bf_comp_time = (t_bf_end - t_bf_start) * 1000
+
+            r_bf = self.calculate_metrics(best_bf_order, 'astar')
+            r_bf['time'] += bf_comp_time
+            results['BF'] = r_bf
         else:
             results['BF'] = None
 
@@ -402,7 +442,7 @@ class MainWindow(QMainWindow):
         self.results_cache = None
 
     def run_calculations(self):
-        if self.spin.value() > 11:
+        if self.spin.value() > 9:
             QMessageBox.warning(self, "Uyarı", "Ürün sayısı 9'dan fazla! Brute Force hesaplanmayacak.")
         self.results_cache = self.sim.run_full_analysis()
         if not self.results_cache: return
@@ -433,13 +473,12 @@ class MainWindow(QMainWindow):
         self.figure.clear()
         res = self.results_cache
 
-        # Grafikleri 2x3 grid olarak ayarla (toplam 6 grafik)
         ax1 = self.figure.add_subplot(231)
         ax2 = self.figure.add_subplot(232)
         ax3 = self.figure.add_subplot(233)
         ax4 = self.figure.add_subplot(234)
         ax5 = self.figure.add_subplot(235)
-        ax6 = self.figure.add_subplot(236)  # VERİMLİLİK PUANI
+        ax6 = self.figure.add_subplot(236)
 
         # Grafik Verileri (RND YOK)
         algos = ['K-NN', 'SA']
@@ -457,7 +496,7 @@ class MainWindow(QMainWindow):
         ax1.set_ylabel('Birim')
         for i, v in enumerate(dists): ax1.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
 
-        # 2. Algoritma Tutarlılığı (Sağlama)
+        # 2. Algoritma Tutarlılığı
         labels = ['A*', 'Dij', 'BFS']
         knn_lens = [res['KNN']['A*']['dist'], res['KNN']['Dijkstra']['dist'], res['KNN']['BFS']['dist']]
         sa_lens = [res['SA']['A*']['dist'], res['SA']['Dijkstra']['dist'], res['SA']['BFS']['dist']]
@@ -479,14 +518,40 @@ class MainWindow(QMainWindow):
         ax3.set_xticks(x);
         ax3.set_xticklabels(labels)
 
-        # 4. Süre
-        knn_time = [res['KNN']['A*']['time'], res['KNN']['Dijkstra']['time'], res['KNN']['BFS']['time']]
-        sa_time = [res['SA']['A*']['time'], res['SA']['Dijkstra']['time'], res['SA']['BFS']['time']]
-        ax4.bar(x - width / 2, knn_time, width, color='blue', alpha=0.6)
-        ax4.bar(x + width / 2, sa_time, width, color='green', alpha=0.6)
-        ax4.set_title('Hesaplama Süresi (ms)')
-        ax4.set_xticks(x);
-        ax4.set_xticklabels(labels)
+        # -------------------------------------------------------------
+        # 4. GRAFİK (DEĞİŞTİRİLEN KISIM): BRUTE FORCE SÜRESİ EKLENDİ
+        # -------------------------------------------------------------
+        # Verileri hazırla
+        time_labels = ['K-A*', 'K-Dij', 'K-BFS', 'S-A*', 'S-Dij', 'S-BFS']
+        time_values = [
+            res['KNN']['A*']['time'], res['KNN']['Dijkstra']['time'], res['KNN']['BFS']['time'],
+            res['SA']['A*']['time'], res['SA']['Dijkstra']['time'], res['SA']['BFS']['time']
+        ]
+        time_colors = ['blue', 'blue', 'blue', 'green', 'green', 'green']
+
+        # Brute Force varsa listeye ekle
+        if res['BF']:
+            time_labels.append('BF')
+            time_values.append(res['BF']['time'])
+            time_colors.append('gold')
+
+        # Çizim
+        ax4.bar(time_labels, time_values, color=time_colors)
+        ax4.set_title('Hesaplama Süresi (Logaritmik)', fontsize=10)
+        ax4.set_ylabel('Milisaniye (ms)', fontsize=9)
+
+        # LOGARİTMİK ÖLÇEK (Yoksa BF 2000 iken, diğerleri 0.1 görünmez)
+        ax4.set_yscale('log')
+
+        # X Eksen yazılarını küçült sığsın
+        ax4.tick_params(axis='x', labelsize=8)
+
+        # Değerleri yaz (Değer küçükse okunur formatta)
+        for i, v in enumerate(time_values):
+            txt = f"{v:.1f}" if v > 1 else f"{v:.2f}"
+            ax4.text(i, v, txt, ha='center', va='bottom', fontsize=8, color='black')
+
+        # -------------------------------------------------------------
 
         # 5. Optimizasyon Kazancı (BF Dahil)
         rnd_dist = res['RND']['A*']['dist']
@@ -514,53 +579,42 @@ class MainWindow(QMainWindow):
         for b in bars: ax5.text(b.get_x() + b.get_width() / 2, b.get_height(), f'%{b.get_height():.1f}', ha='center',
                                 va='bottom')
 
-        # ---------------------------------------------------------
-        # 6. (DÜZELTİLMİŞ) VERİMLİLİK PUANI
-        # Mantık: BF'nin süresi artsa bile puanı DÜŞMELİ.
-        # Eski formüldeki +10 sabiti kaldırıldı, zaman etkisi artırıldı.
-        # ---------------------------------------------------------
-
+        # 6. VERİMLİLİK PUANI
         comp_labels = []
         scores = []
         bar_colors = []
 
-        # Puan hesaplama yardımcı fonksiyonu (YENİ FORMÜL)
+        # Formül: Sabit / (Mesafe * (Süre + 1)^2)
         def calculate_score(dist, time_ms):
             if dist == 0: return 0
-            # Buffer'ı +10'dan +0.5'e indirdim.
-            # Artık 0.1ms (KNN) ile 20ms (BF) arasında 200 kat puan farkı oluşacak.
-            return 10000000 / (dist * (time_ms + 0.5))
+            time_penalty = (time_ms + 1) ** 2
+            return 10000000 / (dist * time_penalty)
 
-        # K-NN varyasyonları
         for sub in ['A*', 'Dijkstra', 'BFS']:
             comp_labels.append(f"KNN\n{sub}")
             s = calculate_score(res['KNN'][sub]['dist'], res['KNN'][sub]['time'])
             scores.append(s)
             bar_colors.append('lightblue')
 
-        # SA varyasyonları
         for sub in ['A*', 'Dijkstra', 'BFS']:
             comp_labels.append(f"SA\n{sub}")
             s = calculate_score(res['SA'][sub]['dist'], res['SA'][sub]['time'])
             scores.append(s)
             bar_colors.append('lightgreen')
 
-        # Brute Force
         if res['BF']:
             comp_labels.append("BF")
             s = calculate_score(res['BF']['dist'], res['BF']['time'])
             scores.append(s)
             bar_colors.append('gold')
 
-        # Çizim
         score_bars = ax6.bar(comp_labels, scores, color=bar_colors, edgecolor='black', alpha=0.8)
-        ax6.set_title('TOPLAM VERİMLİLİK PUANI\n(Hız Kriteri Artırıldı)', fontsize=9, fontweight='bold',
+        ax6.set_title('TOPLAM VERİMLİLİK PUANI\n(Hesaplama Zamanı Dahil Edildi)', fontsize=9, fontweight='bold',
                       color='darkred')
         ax6.set_ylabel('Verimlilik Skoru', fontsize=9)
         ax6.tick_params(axis='x', labelsize=7, rotation=15)
         ax6.grid(axis='y', linestyle='--', alpha=0.3)
 
-        # Değerleri yaz
         for bar in score_bars:
             h = bar.get_height()
             ax6.text(bar.get_x() + bar.get_width() / 2, h, f"{int(h)}", ha='center', va='bottom', fontsize=8,
