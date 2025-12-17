@@ -509,8 +509,6 @@ class MainWindow(QMainWindow):
     def run_calculations(self):
         if len(self.sim.items) > 11:
             if self.check_bf.isChecked():
-                QMessageBox.warning(self, "Sınır Uyarısı",
-                                    "Ürün sayısı 11'den fazla!\nBrute Force işlemi çok uzun süreceği için iptal edilecek.")
                 self.check_bf.setChecked(False)
 
         self.results_cache = self.sim.analiz(self.spin_n.value())
