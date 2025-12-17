@@ -414,12 +414,12 @@ class MainWindow(QMainWindow):
         clayout.addLayout(dim_layout)
 
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("Ürün:"))
+        h1.addWidget(QLabel("Ürün Sayısı:"))
         self.spin = QSpinBox();
         self.spin.setValue(5);
         self.spin.setRange(0, 100)
         h1.addWidget(self.spin)
-        h1.addWidget(QLabel("Test N:"))
+        h1.addWidget(QLabel("Test Sayısı:"))
         self.spin_n = QSpinBox()
         self.spin_n.setValue(1)
         self.spin_n.setRange(1, 100)
