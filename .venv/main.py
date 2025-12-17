@@ -419,7 +419,7 @@ class MainWindow(QMainWindow):
         self.spin.setValue(5);
         self.spin.setRange(0, 100)
         h1.addWidget(self.spin)
-        h1.addWidget(QLabel("Test Sayısı:"))
+        h1.addWidget(QLabel("Test Sayısı (N):"))
         self.spin_n = QSpinBox()
         self.spin_n.setValue(1)
         self.spin_n.setRange(1, 100)
@@ -570,7 +570,7 @@ class MainWindow(QMainWindow):
         sa_vis = [res['SA']['A*']['vis'], res['SA']['Dijkstra']['vis'], res['SA']['BFS']['vis']]
         ax3.bar(x - width / 2, knn_vis, width, color='blue', alpha=0.6)
         ax3.bar(x + width / 2, sa_vis, width, color='green', alpha=0.6)
-        ax3.set_title('Ortalama Verimlilik')
+        ax3.set_title('Ortalama Verimlilik\n(Gezilen Düğüm Sayısı)')
         ax3.set_xticks(x);
         ax3.set_xticklabels(labels)
 
