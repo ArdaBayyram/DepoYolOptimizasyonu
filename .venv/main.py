@@ -8,21 +8,21 @@ import numpy as np
 from collections import deque
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout,
                              QHBoxLayout, QPushButton, QLabel, QMessageBox,
-                             QSpinBox, QGroupBox, QCheckBox, QGridLayout)
+                             QSpinBox, QGroupBox, QCheckBox, QGridLayout, QRadioButton, QButtonGroup)
 from PyQt5.QtGui import QPainter, QColor, QPen, QBrush
-from PyQt5.QtCore import Qt
+from PyQt5.QtCore import Qt, pyqtSignal
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 
-# AYARLAR
-DEPO_BOYUTU = 55
-ENGEL_ORANI = 0.8
 
 class YolBulucu:
     def __init__(self, grid):
         self.grid = grid
-        self.rows = len(grid)
-        self.cols = len(grid[0])
+        self.update_dims()
+
+    def update_dims(self):
+        self.rows = len(self.grid)
+        self.cols = len(self.grid[0])
 
     def heuristic(self, a, b, use_heuristic):
         return (abs(a[0] - b[0]) + abs(a[1] - b[1])) if use_heuristic else 0
@@ -91,29 +91,38 @@ class YolBulucu:
 
 
 class DepoSim(QWidget):
+    itemCountChanged = pyqtSignal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.grid = np.zeros((DEPO_BOYUTU, DEPO_BOYUTU))
+        self.rows = 55
+        self.cols = 55
+        self.grid = np.zeros((self.rows, self.cols))
         self.items = []
         self.start_pos = (0, 0)
         self.active_paths = []
         self.pathfinder = None
-        self.DepoOlustur()
+        self.edit_mode = 0
+        self.DepoOlustur(self.rows, self.cols)
 
-    def DepoOlustur(self):
-        self.grid = np.zeros((DEPO_BOYUTU, DEPO_BOYUTU))
+    def DepoOlustur(self, rows, cols):
+        self.rows = rows
+        self.cols = cols
+        self.grid = np.zeros((rows, cols))
+        self.items = []
+
         c = 1
-        while c < DEPO_BOYUTU - 1:
-            if abs(c - DEPO_BOYUTU // 2) < 2:
+        while c < cols - 1:
+            if abs(c - cols // 2) < 2:
                 c += 1
                 continue
             if random.random() < 0.7:
                 shelf_width = 1
-                if c < DEPO_BOYUTU - 2 and random.random() < 0.3: shelf_width = 2
+                if c < cols - 2 and random.random() < 0.3: shelf_width = 2
                 r = 1
-                while r < DEPO_BOYUTU - 1:
+                while r < rows - 1:
                     block_len = random.randint(3, 8)
-                    if r + block_len >= DEPO_BOYUTU - 1: block_len = DEPO_BOYUTU - 1 - r
+                    if r + block_len >= rows - 1: block_len = rows - 1 - r
                     for k in range(block_len):
                         self.grid[r + k][c] = 1
                         if shelf_width == 2: self.grid[r + k][c + 1] = 1
@@ -124,28 +133,50 @@ class DepoSim(QWidget):
             else:
                 c += 1
 
-        mid_col = DEPO_BOYUTU // 2
+        mid_col = cols // 2
         safe_r = 0
-        while safe_r < DEPO_BOYUTU and self.grid[safe_r][mid_col] == 1:
+        while safe_r < rows and self.grid[safe_r][mid_col] == 1:
             safe_r += 1
-        if safe_r >= DEPO_BOYUTU: safe_r = 0
+        if safe_r >= rows: safe_r = 0
         self.start_pos = (safe_r, mid_col)
 
         self.pathfinder = YolBulucu(self.grid)
-        self.items = []
         self.active_paths = []
+        self.itemCountChanged.emit(0)
         self.update()
+
+    def mousePressEvent(self, event):
+        w = self.width() / self.cols
+        h = self.height() / self.rows
+        c = int(event.x() / w)
+        r = int(event.y() / h)
+
+        if 0 <= r < self.rows and 0 <= c < self.cols:
+            if self.edit_mode == 1:
+                if (r, c) != self.start_pos and (r, c) not in self.items:
+                    self.grid[r][c] = 1 - self.grid[r][c]
+                    self.pathfinder.grid = self.grid
+                    self.pathfinder.update_dims()
+            elif self.edit_mode == 2:
+                if self.grid[r][c] == 0 and (r, c) != self.start_pos:
+                    if (r, c) in self.items:
+                        self.items.remove((r, c))
+                    else:
+                        self.items.append((r, c))
+                    self.itemCountChanged.emit(len(self.items))
+            self.update()
 
     def olusturmaduzeni(self, count):
         self.items = []
         attempts = 0
-        while len(self.items) < count and attempts < 3000:
-            rx, ry = random.randint(0, DEPO_BOYUTU - 1), random.randint(0, DEPO_BOYUTU - 1)
+        while len(self.items) < count and attempts < 5000:
+            rx, ry = random.randint(0, self.rows - 1), random.randint(0, self.cols - 1)
             if self.grid[rx][ry] == 0 and (rx, ry) != self.start_pos:
                 if (rx, ry) not in self.items:
                     self.items.append((rx, ry))
             attempts += 1
         self.active_paths = []
+        self.itemCountChanged.emit(len(self.items))
         self.update()
 
     def hesaplama(self, order, algo_type='astar'):
@@ -194,105 +225,116 @@ class DepoSim(QWidget):
             'path': ButunMesafe
         }
 
-    def analiz(self):
+    def analiz(self, n_tests=1):
         if not self.items: return None
-        results = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
 
-        random_state = random.getstate()
-        random.seed(str(self.items))
+        agg_results = {'KNN': {'A*': [], 'Dijkstra': [], 'BFS': []},
+                       'SA': {'A*': [], 'Dijkstra': [], 'BFS': []},
+                       'RND': {'A*': []}, 'BF': []}
 
-        t_knn_start = time.time()
+        final_best_paths = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
 
-        gidilmeyen = sorted(self.items.copy())
-        curr = self.start_pos;
-        knn_order = []
-        while gidilmeyen:
-            nearest = min(gidilmeyen, key=lambda x: abs(x[0] - curr[0]) + abs(x[1] - curr[1]))
-            knn_order.append(nearest);
-            gidilmeyen.remove(nearest);
-            curr = nearest
+        random_state_init = random.getstate()
 
-        t_knn_end = time.time()
-        knn_comp_time = (t_knn_end - t_knn_start) * 1000
+        for _ in range(n_tests):
 
-        r_astar = self.hesaplama(knn_order, 'astar')
-        r_astar['time'] += knn_comp_time
-        results['KNN']['A*'] = r_astar
+            t_knn_start = time.time()
+            gidilmeyen = sorted(self.items.copy())
+            curr = self.start_pos
+            knn_order = []
+            while gidilmeyen:
+                nearest = min(gidilmeyen, key=lambda x: abs(x[0] - curr[0]) + abs(x[1] - curr[1]))
+                knn_order.append(nearest)
+                gidilmeyen.remove(nearest)
+                curr = nearest
+            t_knn_end = time.time()
+            knn_comp_time = (t_knn_end - t_knn_start) * 1000
 
-        r_dijk = self.hesaplama(knn_order, 'dijkstra')
-        r_dijk['time'] += knn_comp_time
-        results['KNN']['Dijkstra'] = r_dijk
+            for sub in ['astar', 'dijkstra', 'bfs']:
+                key_map = {'astar': 'A*', 'dijkstra': 'Dijkstra', 'bfs': 'BFS'}
+                r = self.hesaplama(knn_order, sub)
+                r['time'] += knn_comp_time
+                agg_results['KNN'][key_map[sub]].append(r)
+                if not final_best_paths['KNN'].get(key_map[sub]): final_best_paths['KNN'][key_map[sub]] = r
 
-        r_bfs = self.hesaplama(knn_order, 'bfs')
-        r_bfs['time'] += knn_comp_time
-        results['KNN']['BFS'] = r_bfs
+            t_sa_start = time.time()
+            curr_sol = sorted(self.items.copy())
+            random.shuffle(curr_sol)
 
-        t_sa_start = time.time()
-
-        curr_sol = sorted(self.items.copy());
-        random.shuffle(curr_sol)
-
-        def maliyet(sol):
-            d = 0;
-            c = self.start_pos
-            for i in sol: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
-            return d
-
-        best_sol = list(curr_sol);
-        best_cost = maliyet(curr_sol)
-        temp = 1000.0
-        for _ in range(1000):
-            new_sol = list(curr_sol)
-            i1, i2 = random.sample(range(len(new_sol)), 2)
-            new_sol[i1], new_sol[i2] = new_sol[i2], new_sol[i1]
-            current_c = maliyet(curr_sol);
-            new_c = maliyet(new_sol)
-            if new_c < current_c or random.random() < math.exp((current_c - new_c) / temp):
-                curr_sol = new_sol
-                if maliyet(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = maliyet(curr_sol)
-            temp *= 0.99
-
-        t_sa_end = time.time()
-        sa_comp_time = (t_sa_end - t_sa_start) * 1000
-
-        r_sa_astar = self.hesaplama(best_sol, 'astar')
-        r_sa_astar['time'] += sa_comp_time
-        results['SA']['A*'] = r_sa_astar
-
-        r_sa_dijk = self.hesaplama(best_sol, 'dijkstra')
-        r_sa_dijk['time'] += sa_comp_time
-        results['SA']['Dijkstra'] = r_sa_dijk
-
-        r_sa_bfs = self.hesaplama(best_sol, 'bfs')
-        r_sa_bfs['time'] += sa_comp_time
-        results['SA']['BFS'] = r_sa_bfs
-
-        if len(self.items) <=11:
-            t_bf_start = time.time()
-
-            bestBForder = None
-            minBForder = float('inf')
-            for p in itertools.permutations(self.items):
+            def maliyet(sol):
                 d = 0;
                 c = self.start_pos
-                for i in p: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
-                if d < minBForder: minBForder = d; bestBForder = list(p)
+                for i in sol: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
+                return d
 
-            t_bf_end = time.time()
-            bf_comp_time = (t_bf_end - t_bf_start) * 1000
+            best_sol = list(curr_sol)
+            best_cost = maliyet(curr_sol)
+            temp = 1000.0
+            for _ in range(1000):
+                new_sol = list(curr_sol)
+                i1, i2 = random.sample(range(len(new_sol)), 2)
+                new_sol[i1], new_sol[i2] = new_sol[i2], new_sol[i1]
+                current_c = maliyet(curr_sol)
+                new_c = maliyet(new_sol)
+                if new_c < current_c or random.random() < math.exp((current_c - new_c) / temp):
+                    curr_sol = new_sol
+                    if maliyet(curr_sol) < best_cost: best_sol = list(curr_sol); best_cost = maliyet(curr_sol)
+                temp *= 0.99
+            t_sa_end = time.time()
+            sa_comp_time = (t_sa_end - t_sa_start) * 1000
 
-            r_bf = self.hesaplama(bestBForder, 'astar')
-            r_bf['time'] += bf_comp_time
-            results['BF'] = r_bf
-        else:
-            results['BF'] = None
+            for sub in ['astar', 'dijkstra', 'bfs']:
+                key_map = {'astar': 'A*', 'dijkstra': 'Dijkstra', 'bfs': 'BFS'}
+                r = self.hesaplama(best_sol, sub)
+                r['time'] += sa_comp_time
+                agg_results['SA'][key_map[sub]].append(r)
+                if not final_best_paths['SA'].get(key_map[sub]) or r['dist'] < final_best_paths['SA'][key_map[sub]][
+                    'dist']:
+                    final_best_paths['SA'][key_map[sub]] = r
 
-        rnd_items = sorted(self.items.copy());
-        random.shuffle(rnd_items)
-        results['RND']['A*'] = self.hesaplama(rnd_items, 'astar')
+            if len(self.items) <= 11:
+                t_bf_start = time.time()
+                bestBForder = None
+                minBForder = float('inf')
+                for p in itertools.permutations(self.items):
+                    d = 0;
+                    c = self.start_pos
+                    for i in p: d += abs(i[0] - c[0]) + abs(i[1] - c[1]); c = i
+                    if d < minBForder: minBForder = d; bestBForder = list(p)
+                t_bf_end = time.time()
+                bf_comp_time = (t_bf_end - t_bf_start) * 1000
+                r_bf = self.hesaplama(bestBForder, 'astar')
+                r_bf['time'] += bf_comp_time
+                agg_results['BF'].append(r_bf)
+                final_best_paths['BF'] = r_bf
+            else:
+                pass
 
-        random.setstate(random_state)
-        return results
+        random.setstate(random_state_init)
+
+        avg_results = {'KNN': {}, 'SA': {}, 'RND': {}, 'BF': None}
+
+        def avg_dict(list_of_dicts):
+            if not list_of_dicts: return None
+            base = list_of_dicts[0].copy()
+            for k in ['dist', 'vis', 'turns', 'time']:
+                base[k] = sum(d[k] for d in list_of_dicts) / len(list_of_dicts)
+            return base
+
+        for cat in ['KNN', 'SA']:
+            for sub in ['A*', 'Dijkstra', 'BFS']:
+                res = avg_dict(agg_results[cat][sub])
+                res['path'] = final_best_paths[cat][sub]['path']
+                res['best_dist'] = final_best_paths[cat][sub]['dist']
+                avg_results[cat][sub] = res
+
+        if agg_results['BF']:
+            res = avg_dict(agg_results['BF'])
+            res['path'] = final_best_paths['BF']['path']
+            res['best_dist'] = final_best_paths['BF']['dist']
+            avg_results['BF'] = res
+
+        return avg_results
 
     def rotaTemizle(self):
         self.active_paths = []
@@ -305,11 +347,11 @@ class DepoSim(QWidget):
     def paintEvent(self, event):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        w = self.width() / DEPO_BOYUTU
-        h = self.height() / DEPO_BOYUTU
+        w = self.width() / self.cols
+        h = self.height() / self.rows
 
-        for r in range(DEPO_BOYUTU):
-            for c in range(DEPO_BOYUTU):
+        for r in range(self.rows):
+            for c in range(self.cols):
                 if self.grid[r][c] == 1:
                     painter.setBrush(QBrush(QColor(60, 60, 60)))
                 else:
@@ -357,13 +399,48 @@ class MainWindow(QMainWindow):
 
         ctrl = QGroupBox("Kontroller")
         clayout = QVBoxLayout()
+
+        dim_layout = QHBoxLayout()
+        dim_layout.addWidget(QLabel("W:"))
+        self.spin_w = QSpinBox()
+        self.spin_w.setRange(10, 200)
+        self.spin_w.setValue(60)
+        dim_layout.addWidget(self.spin_w)
+        dim_layout.addWidget(QLabel("H:"))
+        self.spin_h = QSpinBox()
+        self.spin_h.setRange(10, 200)
+        self.spin_h.setValue(60)
+        dim_layout.addWidget(self.spin_h)
+        clayout.addLayout(dim_layout)
+
         h1 = QHBoxLayout()
-        h1.addWidget(QLabel("Ürün Sayısı (Max 100):"))
+        h1.addWidget(QLabel("Ürün:"))
         self.spin = QSpinBox();
-        self.spin.setValue(6);
-        self.spin.setRange(2, 100)
+        self.spin.setValue(5);
+        self.spin.setRange(0, 100)
         h1.addWidget(self.spin)
+        h1.addWidget(QLabel("Test N:"))
+        self.spin_n = QSpinBox()
+        self.spin_n.setValue(1)
+        self.spin_n.setRange(1, 100)
+        h1.addWidget(self.spin_n)
         clayout.addLayout(h1)
+
+        mode_layout = QHBoxLayout()
+        self.rb_none = QRadioButton("Gezin")
+        self.rb_obs = QRadioButton("Engel")
+        self.rb_item = QRadioButton("Eşya")
+        self.rb_none.setChecked(True)
+        self.bg = QButtonGroup()
+        self.bg.addButton(self.rb_none, 0)
+        self.bg.addButton(self.rb_obs, 1)
+        self.bg.addButton(self.rb_item, 2)
+        self.bg.buttonClicked[int].connect(self.change_mode)
+        mode_layout.addWidget(self.rb_none)
+        mode_layout.addWidget(self.rb_obs)
+        mode_layout.addWidget(self.rb_item)
+        clayout.addLayout(mode_layout)
+
         h2 = QHBoxLayout()
         b1 = QPushButton("Depo Üret");
         b1.clicked.connect(self.reset)
@@ -377,7 +454,8 @@ class MainWindow(QMainWindow):
         h2.addWidget(b3)
         clayout.addLayout(h2)
         ctrl.setLayout(clayout)
-        left_layout.addWidget(ctrl, stretch=1)
+
+        left_layout.addWidget(ctrl, stretch=2)
 
         vis_group = QGroupBox("Görselleştirme")
         vis_layout = QGridLayout()
@@ -403,7 +481,8 @@ class MainWindow(QMainWindow):
         vis_layout.addWidget(self.check_sa_bfs, 2, 1)
         vis_layout.addWidget(self.check_bf, 3, 0, 1, 2)
         vis_group.setLayout(vis_layout)
-        left_layout.addWidget(vis_group, stretch=3)
+
+        left_layout.addWidget(vis_group, stretch=2)
 
         right_layout = QVBoxLayout()
         self.figure = plt.figure()
@@ -412,8 +491,13 @@ class MainWindow(QMainWindow):
         layout.addLayout(left_layout, stretch=5)
         layout.addLayout(right_layout, stretch=4)
 
+        self.sim.itemCountChanged.connect(self.spin.setValue)
+
+    def change_mode(self, id):
+        self.sim.edit_mode = id
+
     def reset(self):
-        self.sim.DepoOlustur()
+        self.sim.DepoOlustur(self.spin_h.value(), self.spin_w.value())
         self.figure.clear();
         self.canvas.draw()
         self.results_cache = None
@@ -423,7 +507,13 @@ class MainWindow(QMainWindow):
         self.results_cache = None
 
     def run_calculations(self):
-        self.results_cache = self.sim.analiz()
+        if len(self.sim.items) > 11:
+            if self.check_bf.isChecked():
+                QMessageBox.warning(self, "Sınır Uyarısı",
+                                    "Ürün sayısı 11'den fazla!\nBrute Force işlemi çok uzun süreceği için iptal edilecek.")
+                self.check_bf.setChecked(False)
+
+        self.results_cache = self.sim.analiz(self.spin_n.value())
         if not self.results_cache: return
         self.update_visualization()
         self.draw_graphs()
@@ -434,7 +524,7 @@ class MainWindow(QMainWindow):
         res = self.results_cache
 
         if self.check_knn_astar.isChecked(): self.sim.rotaEkle(res['KNN']['A*']['path'], QColor(0, 0, 255, 120), 6)
-        if self.check_knn_dijk.isChecked(): self.sim.rotaEkle(res['KNN']['Dijkstra']['path'], QColor(0, 255, 255, 120),
+        if self.check_knn_dijk.isChecked(): self.sim.rotaEkle(res['KNN']['Dijkstra']['path'], QColor(0, 90, 255, 120),
                                                               4, Qt.DashLine)
         if self.check_knn_bfs.isChecked(): self.sim.rotaEkle(res['KNN']['BFS']['path'], QColor(128, 0, 128, 120), 2,
                                                              Qt.DotLine)
@@ -452,24 +542,25 @@ class MainWindow(QMainWindow):
         self.figure.clear()
         res = self.results_cache
 
-        ax1 = self.figure.add_subplot(221)  # Sol Üst
-        ax3 = self.figure.add_subplot(222)  # Sağ Üst
-        ax4 = self.figure.add_subplot(223)  # Sol Alt
+        ax1 = self.figure.add_subplot(221)
+        ax3 = self.figure.add_subplot(222)
+        ax4 = self.figure.add_subplot(223)
         ax6 = self.figure.add_subplot(224)
 
         algos = ['K-NN', 'SA']
-        dists = [res['KNN']['A*']['dist'], res['SA']['A*']['dist']]
+        dists = [res['KNN']['A*']['best_dist'], res['SA']['A*']['best_dist']]
         colors = ['blue', 'green']
 
         if res['BF']:
             algos.append('BF (Opt)')
-            dists.append(res['BF']['dist'])
+            dists.append(res['BF']['best_dist'])
             colors.append('gold')
 
         ax1.bar(algos, dists, color=colors)
-        ax1.set_title('Mesafe')
+        ax1.set_title(f'En İyi Mesafe (N={self.spin_n.value()})')
         ax1.set_ylabel('Birim')
-        for i, v in enumerate(dists): ax1.text(i, v, str(v), ha='center', va='bottom', fontsize=8, fontweight='bold')
+        for i, v in enumerate(dists): ax1.text(i, v, f"{v:.1f}", ha='center', va='bottom', fontsize=8,
+                                               fontweight='bold')
 
         labels = ['A*', 'Dij', 'BFS']
         x = np.arange(len(labels));
@@ -479,7 +570,7 @@ class MainWindow(QMainWindow):
         sa_vis = [res['SA']['A*']['vis'], res['SA']['Dijkstra']['vis'], res['SA']['BFS']['vis']]
         ax3.bar(x - width / 2, knn_vis, width, color='blue', alpha=0.6)
         ax3.bar(x + width / 2, sa_vis, width, color='green', alpha=0.6)
-        ax3.set_title('Verimlilik (Gezilen Düğüm Sayısı)     ')
+        ax3.set_title('Ortalama Verimlilik')
         ax3.set_xticks(x);
         ax3.set_xticklabels(labels)
 
@@ -496,8 +587,8 @@ class MainWindow(QMainWindow):
             time_colors.append('gold')
 
         ax4.bar(time_labels, time_values, color=time_colors)
-        ax4.set_title('Hesaplama Süresi (Logaritmik)', fontsize=10)
-        ax4.set_ylabel('Milisaniye (ms)', fontsize=9)
+        ax4.set_title('Ortalama Süre (ms)', fontsize=10)
+        ax4.set_ylabel('ms', fontsize=9)
 
         ax4.set_yscale('log')
 
@@ -513,7 +604,7 @@ class MainWindow(QMainWindow):
 
         def calculate_score(dist, time_ms):
             if dist == 0: return 0
-            time_penalty = (time_ms + 1) ** 2
+            time_penalty = (time_ms + 1)
             return 10000000 / (dist * time_penalty)
 
         for sub in ['A*', 'Dijkstra', 'BFS']:
@@ -535,9 +626,8 @@ class MainWindow(QMainWindow):
             bar_colors.append('gold')
 
         score_bars = ax6.bar(comp_labels, scores, color=bar_colors, edgecolor='black', alpha=0.8)
-        ax6.set_title('Verimlilik Puanı', fontsize=9, fontweight='bold',
+        ax6.set_title('Puan', fontsize=9, fontweight='bold',
                       color='darkred')
-        ax6.set_ylabel('Verimlilik Skoru', fontsize=9)
         ax6.tick_params(axis='x', labelsize=7, rotation=15)
         ax6.grid(axis='y', linestyle='--', alpha=0.3)
 
